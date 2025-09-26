@@ -24,7 +24,14 @@ Due to the large size of the data (~31 GB), the data/ folder and its subfolders 
 - **sensitivity**
   Scripts to run leave one group out cross validation and bootstrapped resampling of model
 
+### Output
+
+Folder containing data that has been processed by running the scripts
+
 ### Data
+
+Available as a separate GitHub Release (data-v1.0.0) - download this separately, extract the zipped files into the repository root so that a data/ folder sits alongside code/ and output/. For the split archives, download all .z01, .z02, … parts and the corresponding .zip index, then unzip the index file; your unzip tool will read the parts automatically.
+
 - **climate:**  
   Contains CHELSA BIO climate .tif files (temperature, precipitation, extremes) for different scenarios:
   - **current:** Current climate data (1980-2010).
@@ -48,28 +55,27 @@ Due to the large size of the data (~31 GB), the data/ folder and its subfolders 
   
 - **precomputed:**  
   Computationally expensive data such as bootstrapped runs that has been precomputed for ease of use
-
-### Output
-
-Folder containing data that has been processed by running the scripts
-
+---
 ---
 
 ## Usage Instructions
 
-1. **Data Preparation:**  
+1. **Download data folder:** 
+  Download the latest GitHub Release (e.g., data-v1.0.0) separately, extract the zipped files into the repo root so that a data/ folder sits alongside code/ and output/. For the split archives, download all .z01, .z02, … parts and the corresponding .zip index, then unzip the index file; your unzip tool will read the parts automatically.
+
+2. **Data Preparation:**   
    Run `forest_trait_means_data_creation.R` to generate the forest trait and static geographic variables. This script produces a base CSV file (`forest_trait_means.csv`) that is used for further analysis.
 
-2. **Extract Climate Data:**  
+3. **Extract Climate Data:**  
    Execute `extract_climate_data.R` to extract climate data from the `.tif` files in the `data/climate` directory. The extracted data is merged with the forest trait data and exported as CSV files to the `data/precomputed` directory for each climate scenario.
 
-3. **Analysis:**  
+4. **Analysis:**  
    Open the `trait_environment_misalignment.ipynb` Jupyter Notebook to run the models and make the predictions as per the findings reported. 
 
-4. **Visualisation and Sensitivity Analysis:**  
+5. **Visualisation and Sensitivity Analysis:**  
    Additional analysis routines and plotting functions can be found in the `plotting` and `sensitivity` directories under the `code/forest_trait_means_data_creation.R` file.
 
----
+
 
 ## Contact
 
