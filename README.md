@@ -44,9 +44,9 @@ Available as a separate GitHub Release (data-v1.0.0) - download this separately,
   
 - **traits:**  
   Three trait databases:
-  - `trait_syndromes.csv` - taken from Rueda et al., 2018
-  - `myco_trait.csv` - taken from Averill et al., 2022
-  - `physiological_traits.csv` - taken from Maynard et al., 2022 
+  - `trait_syndromes.csv` - taken from [Rueda et al., 2018](https://nsojournals.onlinelibrary.wiley.com/doi/full/10.1111/ecog.03008?casa_token=B8UnShprBFAAAAAA%3AwasCSsZ1tiI4nEAnYjwkRpj5liu2wtTFh_BMBmNPOybFTbU_8eS7dkvdPA9f-SfTe9TUfqX09lzWlUfm)
+  - `myco_trait.csv` - taken from [Averill et al., 2022](https://www.nature.com/articles/s41559-022-01663-9)
+  - `physiological_traits.csv` - taken from [Maynard et al., 2022](https://www.nature.com/articles/s41467-022-30888-2) 
   
 - **forest_plots:**  
   Contains plot-level forest inventory data:
