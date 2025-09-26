@@ -2,7 +2,7 @@
 
 This repository explores how functional composition affects trait-environment misalignment under climate change and identifies communities where projected climate conditions create the strongest mismatch between current and future community-level functional composition. The main model is implemented in the `trait-environment misalignment.ipynb` notebook.
 
-Due to the large size of the data (~31 GB), the data/ folder and its subfolders are not included in the repo clone. They’re zipped, split, and attached to a GitHub Release (e.g. data-v1). To use the project, download the data assets from the Release and extract them into the repository root so that a data/ folder sits alongside code/ and output/. For split archives, download all .z01, .z02, … parts and the corresponding .zip index, then unzip the index file; your unzip tool will read the parts automatically. Ensure you have ~35–40 GB free for download and extraction.
+Due to the large size of the data (~31 GB), the data/ folder and its subfolders are not included in the repo clone. They’re zipped, split, and attached to a GitHub Release (data-v1). To use the project, download the data assets from the Release and extract them into the repository root so that a data/ folder sits alongside code/ and output/. For split archives, download all .z01, .z02, … parts and the corresponding .zip index, then unzip the index file; your unzip tool will read the parts automatically. Ensure you have ~35–40 GB free for download and extraction.
 
 ---
 
