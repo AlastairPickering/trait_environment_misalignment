@@ -1,4 +1,4 @@
-# large data kept out of Git (use Releases instead)
+# large data kept out of Git
 data/
 
 # build / env / cache junk
@@ -10,7 +10,7 @@ __pycache__/
 .DS_Store
 **/.DS_Store
 
-# R artefacts (since you have R scripts)
+# R artefacts
 .Rproj.user/
 .Rhistory
 .RData
