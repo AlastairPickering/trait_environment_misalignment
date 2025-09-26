@@ -1,4 +1,4 @@
-# Forest Trait Environment Misalignment Repository
+# North American Forest Trait-Environment Misalignment
 
 This repository explores how functional composition affects trait-environment misalignment under climate change and identifies communities where projected climate conditions create the strongest mismatch between current and future community-level functional composition. The main model is implemented in the `trait-environment misalignment.ipynb` notebook.
 
