@@ -1,0 +1,19 @@
+# large data kept out of Git (use Releases instead)
+data/
+
+# build / env / cache junk
+.venv/
+__pycache__/
+*.pyc
+
+# macOS Finder junk
+.DS_Store
+**/.DS_Store
+
+# R artefacts (since you have R scripts)
+.Rproj.user/
+.Rhistory
+.RData
+
+# local release staging
+rel/
