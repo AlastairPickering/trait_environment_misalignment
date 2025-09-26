@@ -33,7 +33,7 @@ Folder containing data that has been processed by running the scripts
 Available as a separate GitHub Release (data-v1.0.0) - download this separately, extract the zipped files into the repository root so that a data/ folder sits alongside code/ and output/. For the split archives, download all .z01, .z02, … parts and the corresponding .zip index, then unzip the index file; your unzip tool will read the parts automatically.
 
 - **climate:**  
-  Contains CHELSA BIO climate .tif files (temperature, precipitation, extremes) for different scenarios:
+  Contains [CHELSA BIO](https://chelsa-climate.org/bioclim/) climate .tif files (temperature, precipitation, extremes) for different scenarios:
   - **current:** Current climate data (1980-2010).
   - **ssp126:** Climate projections under SSP126.
   - **ssp370:** Climate projections under SSP370.
@@ -50,12 +50,11 @@ Available as a separate GitHub Release (data-v1.0.0) - download this separately,
   
 - **forest_plots:**  
   Contains plot-level forest inventory data:
-  - **Canada:** Data specific to Canadian forest plots.
-  - **US:** Contains the `cleaned_state_data` subdirectory with data for US states.
+  - **Canada:** Plot-level inventory data sourced from [Canada's National Forest Inventory](https://pubs.cif-ifc.org/doi/abs/10.5558/tfc81214-2)
+  - **US:** Plot-level inventory data sourced from the [Forest Inventory and Analysis Database](https://research.fs.usda.gov/treesearch/42183). Contains `cleaned_state_data` subdirectory with data for US states.
   
 - **precomputed:**  
   Computationally expensive data such as bootstrapped runs that has been precomputed for ease of use
----
 ---
 
 ## Usage Instructions
