@@ -20,6 +20,19 @@ library(V.PhyloMaker)
 library(e1071)
 library(sf)
 
+# Monte Carlo CWM settings (intraspecific / model-error perturbations)
+RUN_MC_CWMS <- TRUE
+MC_N_REP <- 1000
+
+# Path to the error-adjustment spreadsheet
+MC_ERROR_FILE <- "data/traits/trait_error_predictions.csv"
+
+# Where to write the perturbed CWMs (one parquet file per replicate)
+MC_OUT_DIR <- "data/precomputed/forest_trait_means_mc"
+
+# Anchored scaling parameters (mean/sd of log traits) used to standardise traits for the MC CWMs
+MC_SCALING_FILE <- "data/precomputed/trait_log_scaling_params.rds"
+
 # read in FIA forest type codes
 FIA_forest_code <- read_csv("data/metadata/FIA_forest_types.csv") %>% 
   dplyr::select(VALUE, group_label, TYPGRPCD, MEANING)
@@ -764,3 +777,333 @@ plot_traits_df <- plot_traits_df %>%
   dplyr::select(-BIOME_LABEL)  # Optionally remove the temporary BIOME_LABEL column
 
 write_csv(plot_traits_df,"data/precomputed/forest_trait_means.csv")
+
+# Monte-Carlo perturbed CWMs
+
+if (isTRUE(RUN_MC_CWMS)) {
+  
+  # SETTINGS
+  REBUILD_MC_SCALING <- TRUE
+  
+  # Use order-level error distributions when n_err(trait, order) >= threshold; else use group-level
+  USE_ORDER_ERRORS <- TRUE
+  MC_MIN_N_ORDER <- 30  # e
+  
+  # Read the error adjustment table
+  error_df <- read_csv(MC_ERROR_FILE) %>%
+    mutate(
+      trait_short = tolower(trait),
+      trait_short = gsub(" ", "_", trait_short)
+    ) %>%
+    filter(!is.na(rel_adjust), rel_adjust > 0)
+  
+  # Exclude non-physiological / non-perturbed traits
+  exclude_traits <- c("shade", "drought", "cold", "fire_tol", "myco_association", "water")
+  
+  # Traits to perturb = physiological traits present in plot_traits_df and the error table
+  traits_for_mc <- intersect(setdiff(names(traits_transformed), "accepted_bin"), names(plot_traits_df))
+  traits_for_mc <- intersect(traits_for_mc, unique(error_df$trait_short))
+  traits_for_mc <- setdiff(traits_for_mc, exclude_traits)
+  
+  if (length(traits_for_mc) == 0) stop("No physiological traits found for MC after exclusions / matching error table.")
+  
+  # Anchored scaling on plot-level baseline CWMs (z-space)
+  plot_traits_base <- plot_traits_df %>%
+    dplyr::select(pid, all_of(traits_for_mc))
+  
+  if (REBUILD_MC_SCALING || !file.exists(MC_SCALING_FILE)) {
+    
+    trait_scaling <- tibble(
+      trait_short = traits_for_mc,
+      mean_log = purrr::map_dbl(traits_for_mc, ~ mean(plot_traits_base[[.x]], na.rm = TRUE)),
+      sd_log   = purrr::map_dbl(traits_for_mc, ~ sd(plot_traits_base[[.x]], na.rm = TRUE)),
+      n_finite = purrr::map_int(traits_for_mc, ~ sum(is.finite(plot_traits_base[[.x]])))
+    ) %>%
+      filter(!is.na(sd_log) & sd_log > 0 & n_finite >= 2)
+    
+    dir.create(dirname(MC_SCALING_FILE), recursive = TRUE, showWarnings = FALSE)
+    saveRDS(trait_scaling, MC_SCALING_FILE)
+    
+  } else {
+    trait_scaling <- readRDS(MC_SCALING_FILE)
+  }
+  
+  sd_lookup <- setNames(trait_scaling$sd_log, trait_scaling$trait_short)
+  mean_lookup <- setNames(trait_scaling$mean_log, trait_scaling$trait_short)
+  
+  traits_for_mc <- intersect(traits_for_mc, trait_scaling$trait_short)
+  if (length(traits_for_mc) == 0) stop("No traits_for_mc left after scaling (sd_log invalid).")
+  
+  # Baseline plot CWMs in z-space: z = (cwm_log - mean_log) / sd_log
+  plot_cwm_base_z <- plot_traits_base %>%
+    dplyr::select(pid, all_of(traits_for_mc)) %>%
+    pivot_longer(cols = -pid, names_to = "trait_short", values_to = "cwm_log") %>%
+    mutate(
+      mean_log = mean_lookup[trait_short],
+      sd_log = sd_lookup[trait_short],
+      base_cwm_z = (cwm_log - mean_log) / sd_log
+    ) %>%
+    dplyr::select(pid, trait_short, base_cwm_z)
+  
+  # Species taxonomy mapping (accepted_bin -> order, group)
+  # group comes from error table where possible; otherwise default Angiosperms
+  order_map <- error_df %>% distinct(order, group)
+  
+  species_tax <- metadata_df %>%
+    dplyr::select(accepted_bin, order) %>%
+    left_join(order_map, by = "order") %>%
+    mutate(group = if_else(is.na(group), "Angiosperms", group)) %>%
+    mutate(group = if_else(group %in% c("Angiosperms", "Gymnosperms"), group, "Angiosperms")) %>%
+    dplyr::select(accepted_bin, order, group)
+  
+  # Plot x species basal area in long form + taxonomy
+  plot_ba_long <- plot_df_canada %>%
+    pivot_longer(cols = -pid, names_to = "accepted_bin", values_to = "basal_area") %>%
+    filter(!is.na(basal_area) & basal_area > 0) %>%
+    left_join(species_tax, by = "accepted_bin") %>%
+    mutate(group = if_else(is.na(group), "Angiosperms", group)) %>%
+    mutate(order = if_else(is.na(order), "UNKNOWN_ORDER", order))
+  
+  # Plot weights by order (and total)
+  plot_order_weights <- plot_ba_long %>%
+    group_by(pid, order, group) %>%
+    summarise(
+      sum_w_order = sum(basal_area),
+      sum_w2_order = sum(basal_area^2),
+      .groups = "drop"
+    )
+  
+  plot_w_total <- plot_order_weights %>%
+    group_by(pid) %>%
+    summarise(sum_w_total = sum(sum_w_order), .groups = "drop") %>%
+    filter(sum_w_total > 0)
+  
+  plot_order_weights <- plot_order_weights %>%
+    left_join(plot_w_total, by = "pid") %>%
+    filter(sum_w_total > 0)
+  
+  # Compute error distributions in z-space
+  # delta_z = log(rel_adjust) / sd_log(trait)
+
+  error_z <- error_df %>%
+    mutate(
+      trait_short = tolower(trait),
+      trait_short = gsub(" ", "_", trait_short)
+    ) %>%
+    filter(trait_short %in% traits_for_mc) %>%
+    mutate(sd_log = sd_lookup[trait_short]) %>%
+    filter(!is.na(sd_log) & sd_log > 0) %>%
+    mutate(delta_z = log(rel_adjust) / sd_log) %>%
+    mutate(group = if_else(is.na(group), "Angiosperms", group)) %>%
+    mutate(group = if_else(group %in% c("Angiosperms", "Gymnosperms"), group, "Angiosperms"))
+  
+  # Group-level stats (trait x group)
+  error_stats_group <- error_z %>%
+    group_by(trait_short, group) %>%
+    summarise(
+      mu_group = mean(delta_z, na.rm = TRUE),
+      sd_group = sd(delta_z, na.rm = TRUE),
+      n_group = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      mu_group = if_else(is.na(mu_group), 0, mu_group),
+      sd_group = if_else(is.na(sd_group), 0, sd_group)
+    )
+  
+  # Order-level stats (trait x order); keep group via order_map when available
+  error_stats_order <- error_z %>%
+    group_by(trait_short, order) %>%
+    summarise(
+      mu_order = mean(delta_z, na.rm = TRUE),
+      sd_order = sd(delta_z, na.rm = TRUE),
+      n_order = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    left_join(order_map, by = "order") %>%
+    mutate(group = if_else(is.na(group), "Angiosperms", group)) %>%
+    mutate(group = if_else(group %in% c("Angiosperms", "Gymnosperms"), group, "Angiosperms")) %>%
+    mutate(
+      mu_order = if_else(is.na(mu_order), 0, mu_order),
+      sd_order = if_else(is.na(sd_order), 0, sd_order)
+    )
+  
+  # Build final (trait x order) parameters with fallback to group when sparse
+  if (isTRUE(USE_ORDER_ERRORS)) {
+    
+    error_params_order <- error_stats_order %>%
+      left_join(error_stats_group, by = c("trait_short", "group")) %>%
+      mutate(
+        use_order = n_order >= MC_MIN_N_ORDER,
+        mu_final = if_else(use_order, mu_order, mu_group),
+        sd_final = if_else(use_order, sd_order, sd_group)
+      ) %>%
+      dplyr::select(trait_short, order, group, mu_final, sd_final, n_order, use_order)
+    
+    # Also handle orders present in plots but absent from error_stats_order
+    plot_orders <- plot_order_weights %>% distinct(order, group)
+    error_params_order <- plot_orders %>%
+      tidyr::expand_grid(trait_short = traits_for_mc) %>%
+      left_join(error_params_order, by = c("trait_short", "order", "group")) %>%
+      left_join(error_stats_group, by = c("trait_short", "group")) %>%
+      mutate(
+        mu_final = if_else(is.na(mu_final), mu_group, mu_final),
+        sd_final = if_else(is.na(sd_final), sd_group, sd_final),
+        use_order = if_else(is.na(use_order), FALSE, use_order)
+      ) %>%
+      dplyr::select(trait_short, order, group, mu_final, sd_final, use_order)
+    
+  } else {
+    
+    # Pure group-level
+    error_params_order <- plot_order_weights %>%
+      distinct(order, group) %>%
+      tidyr::expand_grid(trait_short = traits_for_mc) %>%
+      left_join(error_stats_group, by = c("trait_short", "group")) %>%
+      mutate(
+        mu_final = if_else(is.na(mu_group), 0, mu_group),
+        sd_final = if_else(is.na(sd_group), 0, sd_group),
+        use_order = FALSE
+      ) %>%
+      dplyr::select(trait_short, order, group, mu_final, sd_final, use_order)
+  }
+  
+  # Convert order-level params into plot-level mean/sd (weighted across orders)
+
+  plot_delta_params <- plot_order_weights %>%
+    left_join(error_params_order, by = c("order", "group")) %>%
+    # join creates plot x order x trait rows because error_params_order has multiple traits per order
+    group_by(pid, trait_short) %>%
+    summarise(
+      sum_w_total = dplyr::first(sum_w_total),
+      mean_delta_plot = sum(mu_final * sum_w_order, na.rm = TRUE) / sum_w_total,
+      var_delta_plot  = sum((sd_final^2) * sum_w2_order, na.rm = TRUE) / (sum_w_total^2),
+      sd_delta_plot   = sqrt(pmax(var_delta_plot, 0)),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      mean_delta_plot = if_else(is.na(mean_delta_plot), 0, mean_delta_plot),
+      sd_delta_plot   = if_else(is.na(sd_delta_plot), 0, sd_delta_plot)
+    )
+  
+  # Join baseline + plot-level delta params and write parquets
+  plot_trait_params <- plot_cwm_base_z %>%
+    left_join(plot_delta_params, by = c("pid", "trait_short")) %>%
+    mutate(
+      mean_delta_plot = if_else(is.na(mean_delta_plot), 0, mean_delta_plot),
+      sd_delta_plot   = if_else(is.na(sd_delta_plot), 0, sd_delta_plot)
+    )
+  
+  # Create output directory (overwrite if present)
+  if (dir.exists(MC_OUT_DIR)) unlink(MC_OUT_DIR, recursive = TRUE)
+  dir.create(MC_OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+  
+  set.seed(123)
+  
+  force_trait_columns <- function(df_wide, trait_cols) {
+    missing_cols <- setdiff(trait_cols, names(df_wide))
+    if (length(missing_cols) > 0) df_wide[missing_cols] <- NA_real_
+    df_wide %>% dplyr::select(pid, replicate, dplyr::all_of(trait_cols))
+  }
+  
+  for (r in seq_len(MC_N_REP)) {
+    df_r <- plot_trait_params %>%
+      mutate(cwm = base_cwm_z + rnorm(n(), mean = mean_delta_plot, sd = sd_delta_plot)) %>%
+      dplyr::select(pid, trait_short, cwm) %>%
+      tidyr::pivot_wider(names_from = trait_short, values_from = cwm) %>%
+      mutate(replicate = r) %>%
+      force_trait_columns(traits_for_mc)
+    
+    arrow::write_parquet(df_r, file.path(MC_OUT_DIR, sprintf("forest_trait_means_mc_rep_%04d.parquet", r)))
+  }
+  
+  base_wide <- plot_cwm_base_z %>%
+    pivot_wider(names_from = trait_short, values_from = base_cwm_z) %>%
+    mutate(replicate = 0L) %>%
+    force_trait_columns(traits_for_mc)
+  
+  arrow::write_parquet(base_wide, file.path(MC_OUT_DIR, "forest_trait_means_mc_baseline.parquet"))
+}
+
+# check columns present
+base <- arrow::read_parquet(file.path(MC_OUT_DIR, "forest_trait_means_mc_baseline.parquet"))
+example <- arrow::read_parquet(file.path(MC_OUT_DIR, "forest_trait_means_mc_rep_0002.parquet"))
+print(setdiff(names(base), c("pid","replicate")))
+print(setdiff(names(example), c("pid","replicate")))
+
+trait_cols <- intersect(names(base), names(example))
+trait_cols <- setdiff(trait_cols, c("pid", "replicate"))
+
+base_long <- base %>%
+  select(pid, all_of(trait_cols)) %>%
+  pivot_longer(cols = all_of(trait_cols), names_to = "trait", values_to = "x")
+
+example_long <- example %>%
+  select(pid, all_of(trait_cols)) %>%
+  pivot_longer(cols = all_of(trait_cols), names_to = "trait", values_to = "y")
+
+paired_long <- base_long %>%
+  inner_join(example_long, by = c("pid", "trait")) %>%
+  filter(is.finite(x), is.finite(y))
+
+r2_labels <- paired_long %>%
+  group_by(trait) %>%
+  summarise(
+    r2 = {
+      d <- cur_data()
+      if (nrow(d) < 2) NA_real_ else summary(lm(y ~ x, data = d))$r.squared
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(label = sprintf("R² = %.2f", r2))
+
+# Pair plots
+ggplot(paired_long, aes(x = x, y = y)) +
+  geom_point(alpha = 0.6, size = 0.9) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_text(
+    data = r2_labels,
+    aes(x = -Inf, y = Inf, label = label),
+    inherit.aes = FALSE,
+    hjust = -0.05, vjust = 1.1,
+    size = 3
+  ) +
+  facet_wrap(~ trait, scales = "free") +
+  labs(x = "base", y = "replicate 0001") +
+  theme_bw()
+
+# Check columns present
+diag <- plot_trait_params %>%
+  group_by(trait_short) %>%
+  summarise(
+    n = n(),
+    prop_sd0 = mean(sd_delta_plot == 0, na.rm = TRUE),
+    mean_sd_delta = mean(sd_delta_plot, na.rm = TRUE),
+    mean_var_delta = mean(sd_delta_plot^2, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_sd_delta))
+
+print(diag)
+
+base_spread <- plot_cwm_base_z %>%
+  group_by(trait_short) %>%
+  summarise(
+    sd_base = sd(base_cwm_z, na.rm = TRUE),
+    var_base = sd_base^2,
+    .groups = "drop"
+  )
+
+check <- diag %>%
+  inner_join(base_spread, by = "trait_short") %>%
+  mutate(
+    approx_R2 = var_base / (var_base + mean_var_delta),
+    noise_to_signal_sd = mean_sd_delta / sd_base
+  ) %>%
+  arrange(approx_R2)
+
+print(check)
+
+
+

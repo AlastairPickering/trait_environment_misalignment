@@ -107,12 +107,11 @@ cv_plot <- ggplot() +
   ) +
   scale_fill_manual(
     values = c(
-      "<0.2"    = "#2166ac",
-      "0.2–0.4" = "#67a9cf",
-      "0.4–0.6" = "#d1e5f0",
-      "0.6–0.8" = "#fddbc7",
-      "0.8+"    = "#b2182b"
-    ),
+      "<0.2"    = "#FFFFFF",
+      "0.2–0.4" = "#FDE0DD",
+      "0.4–0.6" = "#FCC5C0",
+      "0.6–0.8" = "#FA9FB5",
+      "0.8+"    = "#CB181D"),
     name = "Sampling Uncertainty"
   ) +
   coord_sf(xlim = c(-175, -50), ylim = c(20, 70)) +
