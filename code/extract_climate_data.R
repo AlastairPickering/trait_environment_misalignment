@@ -1,7 +1,7 @@
 # This code extracts the CHELSA BIO climate information from .tif files for each
 # SSP and merges it into the forest trait and static geographic variables created 
 # in the forest_trait_means_creation.R file. The output of this code forms the basis
-# of the main model code functional_vulnerability.ipynb
+# of the main model code trait_environment_misalignemnt.ipynb
 
 rm(list = ls())
 

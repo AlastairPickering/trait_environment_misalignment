@@ -110,7 +110,7 @@ wa_plot<- read_feather("data/forest_plots/US/cleaned_state_data/FIA_WA.arrow") %
 wa_plot <- merge(wa_plot, FIA_forest_code, by.x = "FORTYPCD", by.y = "VALUE", all.x = TRUE) %>% 
   rename (FIA_label_detail = MEANING) 
 
-# Add in rest of States
+# rest of States
 
 al_plot<- read_feather("data/forest_plots/US/cleaned_state_data/FIA_AL.arrow") %>% 
   filter(alive == 1, forested ==1, good_design ==1, mult_conds ==0, LAST_YEAR == TRUE, DIA>= 5) %>% 
@@ -940,7 +940,7 @@ if (isTRUE(RUN_MC_CWMS)) {
       ) %>%
       dplyr::select(trait_short, order, group, mu_final, sd_final, n_order, use_order)
     
-    # Also handle orders present in plots but absent from error_stats_order
+    # handle orders present in plots but absent from error_stats_order
     plot_orders <- plot_order_weights %>% distinct(order, group)
     error_params_order <- plot_orders %>%
       tidyr::expand_grid(trait_short = traits_for_mc) %>%
@@ -995,6 +995,8 @@ if (isTRUE(RUN_MC_CWMS)) {
     )
   
   # Create output directory (overwrite if present)
+  MC_OUT_DIR <- "data/precomputed/forest_trait_means_mc_correlated"
+  
   if (dir.exists(MC_OUT_DIR)) unlink(MC_OUT_DIR, recursive = TRUE)
   dir.create(MC_OUT_DIR, recursive = TRUE, showWarnings = FALSE)
   
@@ -1006,15 +1008,67 @@ if (isTRUE(RUN_MC_CWMS)) {
     df_wide %>% dplyr::select(pid, replicate, dplyr::all_of(trait_cols))
   }
   
+  mc_trait_order <- traits_for_mc
+  
+  base_z_wide <- plot_trait_params %>%
+    dplyr::select(pid, trait_short, base_cwm_z) %>%
+    tidyr::pivot_wider(names_from = trait_short, values_from = base_cwm_z) %>%
+    dplyr::select(pid, dplyr::all_of(mc_trait_order))
+  
+  mean_delta_wide <- plot_trait_params %>%
+    dplyr::select(pid, trait_short, mean_delta_plot) %>%
+    tidyr::pivot_wider(names_from = trait_short, values_from = mean_delta_plot) %>%
+    dplyr::select(pid, dplyr::all_of(mc_trait_order))
+  
+  sd_delta_wide <- plot_trait_params %>%
+    dplyr::select(pid, trait_short, sd_delta_plot) %>%
+    tidyr::pivot_wider(names_from = trait_short, values_from = sd_delta_plot) %>%
+    dplyr::select(pid, dplyr::all_of(mc_trait_order))
+  
+  mc_pid_order <- base_z_wide$pid
+  
+  base_z_mat <- as.matrix(base_z_wide[, mc_trait_order])
+  mean_delta_mat <- as.matrix(mean_delta_wide[, mc_trait_order])
+  sd_delta_mat <- as.matrix(sd_delta_wide[, mc_trait_order])
+  
+  base_z_mat[!is.finite(base_z_mat)] <- 0
+  mean_delta_mat[!is.finite(mean_delta_mat)] <- 0
+  sd_delta_mat[!is.finite(sd_delta_mat)] <- 0
+  
+  trait_cor_mat <- cor(base_z_mat, use = "pairwise.complete.obs")
+  trait_cor_mat[!is.finite(trait_cor_mat)] <- 0
+  diag(trait_cor_mat) <- 1
+  
+  eig <- eigen(trait_cor_mat, symmetric = TRUE)
+  eig_values_fixed <- pmax(eig$values, 1e-6)
+  trait_cor_pd <- eig$vectors %*% diag(eig_values_fixed) %*% t(eig$vectors)
+  trait_cor_pd <- cov2cor(trait_cor_pd)
+  
+  chol_trait_cor <- chol(trait_cor_pd)
+  
   for (r in seq_len(MC_N_REP)) {
-    df_r <- plot_trait_params %>%
-      mutate(cwm = base_cwm_z + rnorm(n(), mean = mean_delta_plot, sd = sd_delta_plot)) %>%
-      dplyr::select(pid, trait_short, cwm) %>%
-      tidyr::pivot_wider(names_from = trait_short, values_from = cwm) %>%
-      mutate(replicate = r) %>%
+    z_independent <- matrix(
+      rnorm(nrow(base_z_mat) * length(mc_trait_order)),
+      nrow = nrow(base_z_mat),
+      ncol = length(mc_trait_order)
+    )
+    
+    z_correlated <- z_independent %*% chol_trait_cor
+    
+    cwm_mat_r <- base_z_mat + mean_delta_mat + (z_correlated * sd_delta_mat)
+    
+    df_r <- as_tibble(cwm_mat_r)
+    names(df_r) <- mc_trait_order
+    
+    df_r <- df_r %>%
+      mutate(pid = mc_pid_order, replicate = r) %>%
+      dplyr::select(pid, replicate, dplyr::all_of(mc_trait_order)) %>%
       force_trait_columns(traits_for_mc)
     
-    arrow::write_parquet(df_r, file.path(MC_OUT_DIR, sprintf("forest_trait_means_mc_rep_%04d.parquet", r)))
+    arrow::write_parquet(
+      df_r,
+      file.path(MC_OUT_DIR, sprintf("forest_trait_means_mc_rep_%04d.parquet", r))
+    )
   }
   
   base_wide <- plot_cwm_base_z %>%
@@ -1022,88 +1076,12 @@ if (isTRUE(RUN_MC_CWMS)) {
     mutate(replicate = 0L) %>%
     force_trait_columns(traits_for_mc)
   
-  arrow::write_parquet(base_wide, file.path(MC_OUT_DIR, "forest_trait_means_mc_baseline.parquet"))
+  arrow::write_parquet(
+    base_wide,
+    file.path(MC_OUT_DIR, "forest_trait_means_mc_baseline.parquet")
+  )
 }
 
-# check columns present
-base <- arrow::read_parquet(file.path(MC_OUT_DIR, "forest_trait_means_mc_baseline.parquet"))
-example <- arrow::read_parquet(file.path(MC_OUT_DIR, "forest_trait_means_mc_rep_0002.parquet"))
-print(setdiff(names(base), c("pid","replicate")))
-print(setdiff(names(example), c("pid","replicate")))
-
-trait_cols <- intersect(names(base), names(example))
-trait_cols <- setdiff(trait_cols, c("pid", "replicate"))
-
-base_long <- base %>%
-  select(pid, all_of(trait_cols)) %>%
-  pivot_longer(cols = all_of(trait_cols), names_to = "trait", values_to = "x")
-
-example_long <- example %>%
-  select(pid, all_of(trait_cols)) %>%
-  pivot_longer(cols = all_of(trait_cols), names_to = "trait", values_to = "y")
-
-paired_long <- base_long %>%
-  inner_join(example_long, by = c("pid", "trait")) %>%
-  filter(is.finite(x), is.finite(y))
-
-r2_labels <- paired_long %>%
-  group_by(trait) %>%
-  summarise(
-    r2 = {
-      d <- cur_data()
-      if (nrow(d) < 2) NA_real_ else summary(lm(y ~ x, data = d))$r.squared
-    },
-    .groups = "drop"
-  ) %>%
-  mutate(label = sprintf("R² = %.2f", r2))
-
-# Pair plots
-ggplot(paired_long, aes(x = x, y = y)) +
-  geom_point(alpha = 0.6, size = 0.9) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  geom_smooth(method = "lm", se = FALSE) +
-  geom_text(
-    data = r2_labels,
-    aes(x = -Inf, y = Inf, label = label),
-    inherit.aes = FALSE,
-    hjust = -0.05, vjust = 1.1,
-    size = 3
-  ) +
-  facet_wrap(~ trait, scales = "free") +
-  labs(x = "base", y = "replicate 0001") +
-  theme_bw()
-
-# Check columns present
-diag <- plot_trait_params %>%
-  group_by(trait_short) %>%
-  summarise(
-    n = n(),
-    prop_sd0 = mean(sd_delta_plot == 0, na.rm = TRUE),
-    mean_sd_delta = mean(sd_delta_plot, na.rm = TRUE),
-    mean_var_delta = mean(sd_delta_plot^2, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(mean_sd_delta))
-
-print(diag)
-
-base_spread <- plot_cwm_base_z %>%
-  group_by(trait_short) %>%
-  summarise(
-    sd_base = sd(base_cwm_z, na.rm = TRUE),
-    var_base = sd_base^2,
-    .groups = "drop"
-  )
-
-check <- diag %>%
-  inner_join(base_spread, by = "trait_short") %>%
-  mutate(
-    approx_R2 = var_base / (var_base + mean_var_delta),
-    noise_to_signal_sd = mean_sd_delta / sd_base
-  ) %>%
-  arrange(approx_R2)
-
-print(check)
 
 
 
